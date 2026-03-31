@@ -50,7 +50,7 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      # 5. Fix Gradle Wrapper
+      # 5. Fix Gradle Wrapper (WAJIB)
       - name: Fix Gradle Wrapper
         run: |
           chmod +x gradlew
@@ -62,62 +62,60 @@ jobs:
           echo "Wrapper size: $SIZE"
 
           if [ "$SIZE" -lt 50000 ]; then
-            echo "Downloading official wrapper..."
+            echo "Download wrapper resmi..."
 
             curl -L \
               https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar \
               -o "$JAR"
 
             stat -c%s "$JAR"
-          else
-            echo "Wrapper OK"
           fi
 
       # 6. Fix distribution
       - name: Fix gradle-wrapper.properties
         run: |
           sed -i 's|distributionUrl=.*|distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip|' gradle/wrapper/gradle-wrapper.properties
-          cat gradle/wrapper/gradle-wrapper.properties
 
-      # 7. Setup Gradle
+      # 7. Setup Gradle cache
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # 8. Test Gradle
+      # 8. Check Gradle
       - name: Check Gradle
         run: ./gradlew --version
 
-      # 9. Clean project
+      # 9. Clean
       - name: Clean project
         run: ./gradlew clean
 
-      # 10. Build APK (🔥 FIX PIPEFAIL)
+      # 10. Build APK (🔥 FIX UTAMA ADA DI SINI)
       - name: Build Debug APK
         run: |
           set -o pipefail
 
           echo "=== BUILD START ==="
 
+          export GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m"
+
           ./gradlew assembleDebug \
             --stacktrace \
             --info \
             --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m" \
             2>&1 | tee build.log
 
           echo "=== BUILD END ==="
 
       # 11. Debug output
-      - name: Debug build output
+      - name: Debug output
         if: always()
         run: |
-          echo "=== SEARCH APK ==="
+          echo "=== APK SEARCH ==="
           find . -name "*.apk" || true
 
-          echo "=== BUILD FOLDERS ==="
+          echo "=== BUILD DIR ==="
           find . -type d -name build | head -20
 
-      # 12. Find APK (AUTO DETECT)
+      # 12. Find APK (AUTO)
       - name: Find APK
         run: |
           APK_PATH=$(find . -type f -name "*.apk" | head -1)
@@ -148,20 +146,8 @@ jobs:
         with:
           name: build-log-${{ github.run_number }}
           path: build.log
-          retention-days: 7
 
-      # 15. Upload failure logs
-      - name: Upload failure logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-failure-${{ github.run_number }}
-          path: |
-            build.log
-            app/build/reports/
-            ~/.gradle/daemon/**/daemon-*.log
-
-      # 16. Release
+      # 15. Release
       - name: Create Release
         if: >
           success() &&
