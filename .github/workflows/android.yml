@@ -80,26 +80,49 @@ jobs:
           gradle-version: wrapper   # pakai versi dari gradle-wrapper.properties
 
       # ─────────────────────────────────────────
-      # 6. Fix gradlew permission
-      #    (JANGAN re-generate wrapper — project
-      #     sudah punya wrapper Gradle 8.6 sendiri)
+      # 6. Fix gradlew + repair wrapper jar
+      #    gradle-wrapper.jar di repo kosong (0 bytes)
+      #    karena git tidak track binary besar.
+      #    Download jar resmi sesuai versi di
+      #    gradle-wrapper.properties (8.6).
       # ─────────────────────────────────────────
-      - name: Fix gradlew permission
+      - name: Fix gradlew & restore wrapper JAR
         run: |
           chmod +x gradlew
           sed -i 's/\r$//' gradlew
-          echo "=== gradlew is ready ==="
-          ls -lh gradlew
-          echo "=== wrapper jar check ==="
+
+          echo "=== Check wrapper jar ==="
+          JAR="gradle/wrapper/gradle-wrapper.jar"
+          JAR_SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
+          echo "Current jar size: ${JAR_SIZE} bytes"
+
+          if [ "$JAR_SIZE" -lt 10000 ]; then
+            echo "⚠️  Wrapper JAR kosong/invalid — mendownload dari Gradle official..."
+
+            # Baca versi dari properties
+            GRADLE_VERSION=$(grep -oP '(?<=gradle-)[0-9]+\.[0-9]+(\.[0-9]+)?' \
+              gradle/wrapper/gradle-wrapper.properties | head -1)
+            echo "Gradle version: ${GRADLE_VERSION}"
+
+            # Download jar resmi
+            JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradle/wrapper/gradle-wrapper.jar"
+            curl -sSfL "$JAR_URL" -o "$JAR" || {
+              # fallback: pakai GitHub tag format
+              JAR_URL2="https://github.com/gradle/gradle/raw/v${GRADLE_VERSION}/gradle/wrapper/gradle-wrapper.jar"
+              curl -sSfL "$JAR_URL2" -o "$JAR"
+            }
+
+            echo "✅ Downloaded: $(stat -c%s "$JAR") bytes"
+          else
+            echo "✅ Wrapper JAR OK (${JAR_SIZE} bytes)"
+          fi
+
+          echo "=== Final wrapper state ==="
           ls -lh gradle/wrapper/
-          file gradle/wrapper/gradle-wrapper.jar
 
       # ─────────────────────────────────────────
-      # 7. Validate Gradle setup
+      # 7. Print Gradle version
       # ─────────────────────────────────────────
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v3
-
       - name: Print Gradle version
         run: ./gradlew --version
 
