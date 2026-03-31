@@ -22,11 +22,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Debug Info
+      # 2. Info
       - name: Show environment info
         run: |
           echo "Runner OS : ${{ runner.os }}"
           echo "Branch    : ${{ github.ref }}"
+          echo "Actor     : ${{ github.actor }}"
           java -version || true
 
       # 3. Setup JDK 17
@@ -41,7 +42,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install SDK components
+      - name: Install SDK
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager \
@@ -49,8 +50,8 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      # 5. Fix gradlew & wrapper (ANTI ERROR PALING PENTING)
-      - name: Fix Gradle Wrapper
+      # 5. FIX GRADLE WRAPPER (🔥 PALING PENTING)
+      - name: Fix Gradle Wrapper (Official)
         run: |
           chmod +x gradlew
           sed -i 's/\r$//' gradlew
@@ -60,13 +61,12 @@ jobs:
 
           echo "Wrapper size: $SIZE"
 
-          if [ "$SIZE" -lt 10000 ]; then
-            echo "Wrapper rusak → repairing..."
+          if [ "$SIZE" -lt 50000 ]; then
+            echo "Wrapper rusak → download resmi..."
 
-            curl -L https://services.gradle.org/distributions/gradle-8.6-bin.zip -o gradle.zip
-            unzip -q gradle.zip
-
-            cp gradle-8.6/lib/gradle-wrapper-*.jar "$JAR"
+            curl -L \
+              https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar \
+              -o "$JAR"
 
             echo "Wrapper fixed:"
             stat -c%s "$JAR"
@@ -74,17 +74,26 @@ jobs:
             echo "Wrapper OK"
           fi
 
-      # 6. Setup Gradle cache
+      # 6. Pastikan distribution cocok
+      - name: Fix gradle-wrapper.properties
+        run: |
+          sed -i 's|distributionUrl=.*|distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip|' gradle/wrapper/gradle-wrapper.properties
+          echo "Current distribution:"
+          cat gradle/wrapper/gradle-wrapper.properties
+
+      # 7. Setup Gradle cache
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # 7. Verify Gradle
+      # 8. Test Gradle
       - name: Check Gradle
         run: ./gradlew --version
 
-      # 8. Build APK (FULL DEBUG LOG)
+      # 9. Build APK
       - name: Build Debug APK
         run: |
+          echo "=== BUILD START ==="
+
           ./gradlew assembleDebug \
             --stacktrace \
             --info \
@@ -92,7 +101,9 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m" \
             2>&1 | tee build.log
 
-      # 9. Verify APK
+          echo "=== BUILD END ==="
+
+      # 10. Verify APK
       - name: Verify APK
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -102,12 +113,12 @@ jobs:
             ls -lh "$APK"
           else
             echo "APK NOT FOUND ❌"
-            echo "Isi folder build:"
+            echo "Isi build folder:"
             find app/build || true
             exit 1
           fi
 
-      # 10. Upload APK
+      # 11. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -115,7 +126,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      # 11. Upload Log (WAJIB)
+      # 12. Upload Build Log (WAJIB DEBUG)
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,7 +135,7 @@ jobs:
           path: build.log
           retention-days: 7
 
-      # 12. Upload Failure Logs
+      # 13. Upload Failure Logs
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -135,7 +146,7 @@ jobs:
             app/build/reports/
             ~/.gradle/daemon/**/daemon-*.log
 
-      # 13. Auto Release
+      # 14. Create Release
       - name: Create Release
         if: >
           success() &&
@@ -145,6 +156,12 @@ jobs:
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "MusicPlayer Build #${{ github.run_number }}"
+          body: |
+            ✅ Build sukses
+
+            - Commit : ${{ github.sha }}
+            - Branch : ${{ github.ref_name }}
+            - Run    : #${{ github.run_number }}
           files: app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
