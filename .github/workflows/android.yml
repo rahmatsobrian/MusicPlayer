@@ -25,17 +25,25 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────
-      # 2. Info
+      # 2. Environment info
       # ─────────────────────────────────────────
       - name: Show environment info
         run: |
-          echo "Runner OS: ${{ runner.os }}"
-          echo "Actor    : ${{ github.actor }}"
-          echo "Run no   : ${{ github.run_number }}"
-          java -version || true
+          echo "========================================="
+          echo "  Runner OS : ${{ runner.os }}"
+          echo "  Actor     : ${{ github.actor }}"
+          echo "  Ref       : ${{ github.ref }}"
+          echo "  Event     : ${{ github.event_name }}"
+          echo "  Run #     : ${{ github.run_number }}"
+          echo "  Commit    : ${{ github.sha }}"
+          echo "========================================="
+          java -version 2>&1 || true
+          echo "-----------------------------------------"
+          echo "Gradle wrapper version (declared):"
+          grep distributionUrl gradle/wrapper/gradle-wrapper.properties || true
 
       # ─────────────────────────────────────────
-      # 3. JDK
+      # 3. JDK 17
       # ─────────────────────────────────────────
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -46,116 +54,142 @@ jobs:
 
       # ─────────────────────────────────────────
       # 4. Android SDK
+      #    compileSdk=34, buildTools=34.0.0
       # ─────────────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install SDK
+      - name: Install required SDK components
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "=== Accepting SDK licenses ==="
+          yes | sdkmanager --licenses 2>/dev/null || true
+          echo "=== Installing SDK components ==="
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
+          echo "=== Installed SDK packages ==="
+          sdkmanager --list_installed 2>/dev/null | grep -E "(platform-tools|platforms;android|build-tools)" || true
 
       # ─────────────────────────────────────────
-      # 5. Setup Gradle (IMPORTANT)
+      # 5. Setup Gradle (cache + build scan)
       # ─────────────────────────────────────────
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper   # pakai versi dari gradle-wrapper.properties
 
       # ─────────────────────────────────────────
-      # 6. GENERATE WRAPPER (FIX UTAMA 🔥)
+      # 6. Fix gradlew permission
+      #    (JANGAN re-generate wrapper — project
+      #     sudah punya wrapper Gradle 8.6 sendiri)
       # ─────────────────────────────────────────
-      - name: Generate Gradle Wrapper
-        run: |
-          echo "=== GENERATE WRAPPER ==="
-
-          # kalau tidak ada settings.gradle → buat minimal
-          if [ ! -f settings.gradle ] && [ ! -f settings.gradle.kts ]; then
-            echo "rootProject.name = 'ci-temp'" > settings.gradle
-          fi
-
-          # generate wrapper resmi
-          gradle wrapper --gradle-version 8.6 --no-daemon
-
-          echo "=== DONE ==="
-
-      # ─────────────────────────────────────────
-      # 7. Fix gradlew (WAJIB)
-      # ─────────────────────────────────────────
-      - name: Fix gradlew
+      - name: Fix gradlew permission
         run: |
           chmod +x gradlew
           sed -i 's/\r$//' gradlew
-
-      # ─────────────────────────────────────────
-      # 8. Debug wrapper
-      # ─────────────────────────────────────────
-      - name: Check wrapper
-        run: |
-          echo "--- gradle/wrapper ---"
-          ls -la gradle/wrapper
+          echo "=== gradlew is ready ==="
+          ls -lh gradlew
+          echo "=== wrapper jar check ==="
+          ls -lh gradle/wrapper/
           file gradle/wrapper/gradle-wrapper.jar
 
       # ─────────────────────────────────────────
-      # 9. Gradle version
+      # 7. Validate Gradle setup
       # ─────────────────────────────────────────
-      - name: Gradle version
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v3
+
+      - name: Print Gradle version
         run: ./gradlew --version
 
       # ─────────────────────────────────────────
-      # 10. Build APK
+      # 8. Build Debug APK
       # ─────────────────────────────────────────
       - name: Build Debug APK
         run: |
+          echo "=== Starting build ==="
           ./gradlew assembleDebug \
             --stacktrace \
             --info \
-            -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
+            --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m" \
+            2>&1 | tee build_output.log
+          echo "=== Build finished ==="
 
       # ─────────────────────────────────────────
-      # 11. Verify APK
+      # 9. Verify APK
       # ─────────────────────────────────────────
-      - name: Verify APK
+      - name: Verify APK exists
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           if [ -f "$APK" ]; then
             echo "✅ APK FOUND"
-            ls -lh $APK
+            ls -lh "$APK"
+            echo "APK_PATH=$APK" >> $GITHUB_ENV
           else
-            echo "❌ APK NOT FOUND"
+            echo "❌ APK NOT FOUND — listing build outputs for debug:"
+            find app/build/outputs -type f 2>/dev/null || echo "(no outputs directory)"
             exit 1
           fi
 
       # ─────────────────────────────────────────
-      # 12. Upload APK
+      # 10. Upload APK artifact
       # ─────────────────────────────────────────
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-${{ github.run_number }}
+          name: MusicPlayer-debug-${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
 
       # ─────────────────────────────────────────
-      # 13. Upload logs (fail)
+      # 11. Upload build log (always)
       # ─────────────────────────────────────────
-      - name: Upload logs
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: build_output.log
+          retention-days: 7
+
+      # ─────────────────────────────────────────
+      # 12. Upload full Gradle logs on failure
+      # ─────────────────────────────────────────
+      - name: Upload Gradle failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ github.run_number }}
+          name: gradle-failure-logs-${{ github.run_number }}
           path: |
-            app/build/
-            build/
+            build_output.log
+            app/build/reports/
+            ~/.gradle/daemon/**/daemon-*.log
+          retention-days: 7
 
       # ─────────────────────────────────────────
-      # 14. Release
+      # 13. Create GitHub Release
+      #     Hanya saat push ke main/master
+      #     (bukan PR, bukan workflow_dispatch)
       # ─────────────────────────────────────────
-      - name: Create Release
-        if: success() && github.event_name == 'push'
+      - name: Create GitHub Release
+        if: success() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Build #${{ github.run_number }}
+          name: "MusicPlayer Build #${{ github.run_number }}"
+          body: |
+            🎵 **MusicPlayer Debug Build**
+
+            - Commit : `${{ github.sha }}`
+            - Branch : `${{ github.ref_name }}`
+            - Run    : #${{ github.run_number }}
+            - Actor  : ${{ github.actor }}
           files: app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
