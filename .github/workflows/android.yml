@@ -29,17 +29,11 @@ jobs:
       # ─────────────────────────────────────────
       - name: Show environment info
         run: |
-          echo "=========================================="
-          echo " ENVIRONMENT INFO"
-          echo "=========================================="
           echo "Runner OS    : ${{ runner.os }}"
-          echo "GitHub ref   : ${{ github.ref }}"
+          echo "Ref          : ${{ github.ref }}"
           echo "Actor        : ${{ github.actor }}"
           echo "Run number   : ${{ github.run_number }}"
-          echo ""
           java -version || true
-          df -h
-          free -h
 
       # ─────────────────────────────────────────
       # 3. Setup JDK
@@ -63,47 +57,61 @@ jobs:
           sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
 
       # ─────────────────────────────────────────
-      # 5. Setup Gradle (PENTING)
+      # 5. Setup Gradle
       # ─────────────────────────────────────────
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       # ─────────────────────────────────────────
-      # 6. AUTO FIX WRAPPER 🔥
+      # 6. SUPER FIX WRAPPER 🔥
       # ─────────────────────────────────────────
-      - name: Ensure Gradle Wrapper exists
+      - name: Fix Gradle Wrapper
         run: |
+          echo "=== FIXING WRAPPER ==="
+
+          mkdir -p gradle/wrapper
+
+          # Download wrapper jar
           if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "❌ Wrapper missing → generating..."
-            gradle wrapper --gradle-version 8.7
-          else
-            echo "✅ Wrapper exists"
+            echo "Downloading gradle-wrapper.jar..."
+            curl -L -o gradle/wrapper/gradle-wrapper.jar \
+              https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar
           fi
 
-      # ─────────────────────────────────────────
-      # 7. Permission
-      # ─────────────────────────────────────────
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+          # Create properties
+          if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
+            echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip" > gradle/wrapper/gradle-wrapper.properties
+          fi
+
+          # Download gradlew
+          if [ ! -f gradlew ]; then
+            echo "Downloading gradlew..."
+            curl -L -o gradlew https://raw.githubusercontent.com/gradle/gradle/master/gradlew
+          fi
+
+          # Fix CRLF issue
+          sed -i 's/\r$//' gradlew
+
+          chmod +x gradlew
+
+          echo "=== WRAPPER READY ==="
 
       # ─────────────────────────────────────────
-      # 8. Debug project structure
+      # 7. Debug wrapper
       # ─────────────────────────────────────────
-      - name: List project files
+      - name: Verify wrapper
         run: |
-          echo "--- Root ---"
-          ls -la
-          echo "--- gradle/wrapper ---"
-          ls -la gradle/wrapper || true
+          ls -la gradle/wrapper
+          ls -la gradlew
 
       # ─────────────────────────────────────────
-      # 9. Gradle version
+      # 8. Check Gradle
       # ─────────────────────────────────────────
-      - name: Show Gradle version
+      - name: Gradle version
         run: ./gradlew --version
 
       # ─────────────────────────────────────────
-      # 10. Build
+      # 9. Build APK
       # ─────────────────────────────────────────
       - name: Build Debug APK
         run: |
@@ -113,23 +121,23 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
 
       # ─────────────────────────────────────────
-      # 11. Verify APK
+      # 10. Verify APK
       # ─────────────────────────────────────────
       - name: Verify APK
         run: |
-          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          if [ -f "$APK_PATH" ]; then
-            echo "✅ APK OK"
-            ls -lh $APK_PATH
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK" ]; then
+            echo "✅ APK FOUND"
+            ls -lh $APK
           else
             echo "❌ APK NOT FOUND"
             exit 1
           fi
 
       # ─────────────────────────────────────────
-      # 12. Upload APK
+      # 11. Upload APK
       # ─────────────────────────────────────────
-      - name: Upload APK artifact
+      - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -137,9 +145,9 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       # ─────────────────────────────────────────
-      # 13. Upload logs (fail)
+      # 12. Upload logs (fail)
       # ─────────────────────────────────────────
-      - name: Upload logs on failure
+      - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -149,14 +157,14 @@ jobs:
             build/
 
       # ─────────────────────────────────────────
-      # 14. Release
+      # 13. Release
       # ─────────────────────────────────────────
-      - name: Create GitHub Release
+      - name: Create Release
         if: success() && github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: "Build #${{ github.run_number }}"
+          name: Build #${{ github.run_number }}
           files: app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
