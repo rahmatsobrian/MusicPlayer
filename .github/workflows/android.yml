@@ -25,93 +25,84 @@ jobs:
         uses: actions/checkout@v4
 
       # ─────────────────────────────────────────
-      # 2. Environment info
+      # 2. Info
       # ─────────────────────────────────────────
       - name: Show environment info
         run: |
-          echo "Runner OS    : ${{ runner.os }}"
-          echo "Ref          : ${{ github.ref }}"
-          echo "Actor        : ${{ github.actor }}"
-          echo "Run number   : ${{ github.run_number }}"
+          echo "Runner OS: ${{ runner.os }}"
+          echo "Actor    : ${{ github.actor }}"
+          echo "Run no   : ${{ github.run_number }}"
           java -version || true
 
       # ─────────────────────────────────────────
-      # 3. Setup JDK
+      # 3. JDK
       # ─────────────────────────────────────────
-      - name: Set up JDK 17
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: 17
           cache: gradle
 
       # ─────────────────────────────────────────
-      # 4. Setup Android SDK
+      # 4. Android SDK
       # ─────────────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install SDK packages
+      - name: Install SDK
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       # ─────────────────────────────────────────
-      # 5. Setup Gradle
+      # 5. Setup Gradle (IMPORTANT)
       # ─────────────────────────────────────────
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
       # ─────────────────────────────────────────
-      # 6. SUPER FIX WRAPPER 🔥
+      # 6. GENERATE WRAPPER (FIX UTAMA 🔥)
       # ─────────────────────────────────────────
-      - name: Fix Gradle Wrapper
+      - name: Generate Gradle Wrapper
         run: |
-          echo "=== FIXING WRAPPER ==="
+          echo "=== GENERATE WRAPPER ==="
 
-          mkdir -p gradle/wrapper
-
-          # Download wrapper jar
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "Downloading gradle-wrapper.jar..."
-            curl -L -o gradle/wrapper/gradle-wrapper.jar \
-              https://raw.githubusercontent.com/gradle/gradle/master/gradle/wrapper/gradle-wrapper.jar
+          # kalau tidak ada settings.gradle → buat minimal
+          if [ ! -f settings.gradle ] && [ ! -f settings.gradle.kts ]; then
+            echo "rootProject.name = 'ci-temp'" > settings.gradle
           fi
 
-          # Create properties
-          if [ ! -f gradle/wrapper/gradle-wrapper.properties ]; then
-            echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip" > gradle/wrapper/gradle-wrapper.properties
-          fi
+          # generate wrapper resmi
+          gradle wrapper --gradle-version 8.7 --no-daemon
 
-          # Download gradlew
-          if [ ! -f gradlew ]; then
-            echo "Downloading gradlew..."
-            curl -L -o gradlew https://raw.githubusercontent.com/gradle/gradle/master/gradlew
-          fi
+          echo "=== DONE ==="
 
-          # Fix CRLF issue
+      # ─────────────────────────────────────────
+      # 7. Fix gradlew (WAJIB)
+      # ─────────────────────────────────────────
+      - name: Fix gradlew
+        run: |
+          chmod +x gradlew
           sed -i 's/\r$//' gradlew
 
-          chmod +x gradlew
-
-          echo "=== WRAPPER READY ==="
-
       # ─────────────────────────────────────────
-      # 7. Debug wrapper
+      # 8. Debug wrapper
       # ─────────────────────────────────────────
-      - name: Verify wrapper
+      - name: Check wrapper
         run: |
+          echo "--- gradle/wrapper ---"
           ls -la gradle/wrapper
-          ls -la gradlew
+          file gradle/wrapper/gradle-wrapper.jar
 
       # ─────────────────────────────────────────
-      # 8. Check Gradle
+      # 9. Gradle version
       # ─────────────────────────────────────────
       - name: Gradle version
         run: ./gradlew --version
 
       # ─────────────────────────────────────────
-      # 9. Build APK
+      # 10. Build APK
       # ─────────────────────────────────────────
       - name: Build Debug APK
         run: |
@@ -121,7 +112,7 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
 
       # ─────────────────────────────────────────
-      # 10. Verify APK
+      # 11. Verify APK
       # ─────────────────────────────────────────
       - name: Verify APK
         run: |
@@ -135,7 +126,7 @@ jobs:
           fi
 
       # ─────────────────────────────────────────
-      # 11. Upload APK
+      # 12. Upload APK
       # ─────────────────────────────────────────
       - name: Upload APK
         if: success()
@@ -145,7 +136,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
 
       # ─────────────────────────────────────────
-      # 12. Upload logs (fail)
+      # 13. Upload logs (fail)
       # ─────────────────────────────────────────
       - name: Upload logs
         if: failure()
@@ -157,7 +148,7 @@ jobs:
             build/
 
       # ─────────────────────────────────────────
-      # 13. Release
+      # 14. Release
       # ─────────────────────────────────────────
       - name: Create Release
         if: success() && github.event_name == 'push'
