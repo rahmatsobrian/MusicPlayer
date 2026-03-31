@@ -53,8 +53,7 @@ jobs:
           cache: gradle
 
       # ─────────────────────────────────────────
-      # 4. Android SDK
-      #    compileSdk=34, buildTools=34.0.0
+      # 4. Android SDK  (compileSdk=34)
       # ─────────────────────────────────────────
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -68,66 +67,87 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
-          echo "=== Installed SDK packages ==="
-          sdkmanager --list_installed 2>/dev/null | grep -E "(platform-tools|platforms;android|build-tools)" || true
+          echo "=== Installed packages ==="
+          sdkmanager --list_installed 2>/dev/null \
+            | grep -E "(platform-tools|platforms;android|build-tools)" || true
 
       # ─────────────────────────────────────────
-      # 5. Setup Gradle (cache + build scan)
+      # 5. Fix gradlew permission
       # ─────────────────────────────────────────
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: wrapper   # pakai versi dari gradle-wrapper.properties
-
-      # ─────────────────────────────────────────
-      # 6. Fix gradlew + repair wrapper jar
-      #    gradle-wrapper.jar di repo kosong (0 bytes)
-      #    karena git tidak track binary besar.
-      #    Download jar resmi sesuai versi di
-      #    gradle-wrapper.properties (8.6).
-      # ─────────────────────────────────────────
-      - name: Fix gradlew & restore wrapper JAR
+      - name: Fix gradlew permission
         run: |
           chmod +x gradlew
           sed -i 's/\r$//' gradlew
+          echo "gradlew: $(ls -lh gradlew)"
 
-          echo "=== Check wrapper jar ==="
+      # ─────────────────────────────────────────
+      # 6. Setup Gradle 8.6
+      #    gradle-version: "8.6" → setup-gradle
+      #    download & cache Gradle 8.6 ke
+      #    ~/.gradle/wrapper/dists/
+      # ─────────────────────────────────────────
+      - name: Setup Gradle 8.6
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.6"
+
+      # ─────────────────────────────────────────
+      # 7. Repair gradle-wrapper.jar
+      #    JAR di repo 0 bytes → ambil dari cache
+      #    yang baru di-download setup-gradle
+      # ─────────────────────────────────────────
+      - name: Repair gradle-wrapper.jar
+        run: |
           JAR="gradle/wrapper/gradle-wrapper.jar"
           JAR_SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
-          echo "Current jar size: ${JAR_SIZE} bytes"
+          echo "=== Current JAR size: ${JAR_SIZE} bytes ==="
 
           if [ "$JAR_SIZE" -lt 10000 ]; then
-            echo "⚠️  Wrapper JAR kosong/invalid — mendownload dari Gradle official..."
+            echo "JAR kosong — mencari di cache..."
 
-            # Baca versi dari properties
-            GRADLE_VERSION=$(grep -oP '(?<=gradle-)[0-9]+\.[0-9]+(\.[0-9]+)?' \
-              gradle/wrapper/gradle-wrapper.properties | head -1)
-            echo "Gradle version: ${GRADLE_VERSION}"
+            # Cari jar yang sudah di-extract oleh setup-gradle
+            CACHED_JAR=$(find "$HOME/.gradle/wrapper/dists" \
+              -name "gradle-wrapper.jar" 2>/dev/null | head -1)
 
-            # Download jar resmi
-            JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VERSION}/gradle/wrapper/gradle-wrapper.jar"
-            curl -sSfL "$JAR_URL" -o "$JAR" || {
-              # fallback: pakai GitHub tag format
-              JAR_URL2="https://github.com/gradle/gradle/raw/v${GRADLE_VERSION}/gradle/wrapper/gradle-wrapper.jar"
-              curl -sSfL "$JAR_URL2" -o "$JAR"
-            }
+            if [ -n "$CACHED_JAR" ]; then
+              echo "Found cached jar: $CACHED_JAR ($(stat -c%s "$CACHED_JAR") bytes)"
+              cp "$CACHED_JAR" "$JAR"
+            else
+              # Fallback: ekstrak dari zip distribusi
+              echo "Jar belum extracted, mencari zip distribusi..."
+              DIST_ZIP=$(find "$HOME/.gradle/wrapper/dists" \
+                -name "gradle-8.6-bin.zip" 2>/dev/null | head -1)
 
-            echo "✅ Downloaded: $(stat -c%s "$JAR") bytes"
+              if [ -n "$DIST_ZIP" ]; then
+                echo "Found zip: $DIST_ZIP"
+                # Coba beberapa path dalam zip
+                unzip -p "$DIST_ZIP" "gradle-8.6/lib/gradle-wrapper-8.6.jar" \
+                  > "$JAR" 2>/dev/null || \
+                unzip -p "$DIST_ZIP" "gradle-8.6/lib/gradle-wrapper.jar" \
+                  > "$JAR" 2>/dev/null || true
+              fi
+            fi
+
+            FINAL_SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
+            if [ "$FINAL_SIZE" -lt 10000 ]; then
+              echo "Repair gagal (size: ${FINAL_SIZE}). Dump cache structure:"
+              find "$HOME/.gradle/wrapper/dists" -type f | head -30 || true
+              exit 1
+            fi
+            echo "JAR repaired: ${FINAL_SIZE} bytes"
           else
-            echo "✅ Wrapper JAR OK (${JAR_SIZE} bytes)"
+            echo "JAR OK (${JAR_SIZE} bytes) — skip repair"
           fi
-
-          echo "=== Final wrapper state ==="
           ls -lh gradle/wrapper/
 
       # ─────────────────────────────────────────
-      # 7. Print Gradle version
+      # 8. Verify Gradle
       # ─────────────────────────────────────────
       - name: Print Gradle version
         run: ./gradlew --version
 
       # ─────────────────────────────────────────
-      # 8. Build Debug APK
+      # 9. Build Debug APK
       # ─────────────────────────────────────────
       - name: Build Debug APK
         run: |
@@ -141,23 +161,22 @@ jobs:
           echo "=== Build finished ==="
 
       # ─────────────────────────────────────────
-      # 9. Verify APK
+      # 10. Verify APK
       # ─────────────────────────────────────────
       - name: Verify APK exists
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
           if [ -f "$APK" ]; then
-            echo "✅ APK FOUND"
+            echo "APK FOUND"
             ls -lh "$APK"
-            echo "APK_PATH=$APK" >> $GITHUB_ENV
           else
-            echo "❌ APK NOT FOUND — listing build outputs for debug:"
-            find app/build/outputs -type f 2>/dev/null || echo "(no outputs directory)"
+            echo "APK NOT FOUND — listing build outputs:"
+            find app/build/outputs -type f 2>/dev/null || echo "(no outputs dir)"
             exit 1
           fi
 
       # ─────────────────────────────────────────
-      # 10. Upload APK artifact
+      # 11. Upload APK
       # ─────────────────────────────────────────
       - name: Upload APK
         if: success()
@@ -168,7 +187,7 @@ jobs:
           retention-days: 14
 
       # ─────────────────────────────────────────
-      # 11. Upload build log (always)
+      # 12. Upload build log (selalu)
       # ─────────────────────────────────────────
       - name: Upload build log
         if: always()
@@ -179,7 +198,7 @@ jobs:
           retention-days: 7
 
       # ─────────────────────────────────────────
-      # 12. Upload full Gradle logs on failure
+      # 13. Upload Gradle reports saat gagal
       # ─────────────────────────────────────────
       - name: Upload Gradle failure logs
         if: failure()
@@ -193,12 +212,14 @@ jobs:
           retention-days: 7
 
       # ─────────────────────────────────────────
-      # 13. Create GitHub Release
+      # 14. Create GitHub Release
       #     Hanya saat push ke main/master
-      #     (bukan PR, bukan workflow_dispatch)
       # ─────────────────────────────────────────
       - name: Create GitHub Release
-        if: success() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        if: >-
+          success() &&
+          github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
