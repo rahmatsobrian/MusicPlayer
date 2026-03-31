@@ -50,7 +50,7 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      # 5. Fix Gradle Wrapper (WAJIB)
+      # 5. Fix Gradle Wrapper
       - name: Fix Gradle Wrapper
         run: |
           chmod +x gradlew
@@ -62,7 +62,7 @@ jobs:
           echo "Wrapper size: $SIZE"
 
           if [ "$SIZE" -lt 50000 ]; then
-            echo "Download wrapper resmi..."
+            echo "Downloading official wrapper..."
 
             curl -L \
               https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar \
@@ -84,11 +84,15 @@ jobs:
       - name: Check Gradle
         run: ./gradlew --version
 
-      # 9. Clean
+      # 9. Clean project
       - name: Clean project
         run: ./gradlew clean
 
-      # 10. Build APK (🔥 FIX UTAMA ADA DI SINI)
+      # 🔥 10. Download dependencies dulu (PENTING)
+      - name: Resolve dependencies
+        run: ./gradlew dependencies --no-daemon --refresh-dependencies
+
+      # 🔥 11. Build APK (FIX TOTAL)
       - name: Build Debug APK
         run: |
           set -o pipefail
@@ -101,11 +105,12 @@ jobs:
             --stacktrace \
             --info \
             --no-daemon \
+            --refresh-dependencies \
             2>&1 | tee build.log
 
           echo "=== BUILD END ==="
 
-      # 11. Debug output
+      # 12. Debug output
       - name: Debug output
         if: always()
         run: |
@@ -115,7 +120,7 @@ jobs:
           echo "=== BUILD DIR ==="
           find . -type d -name build | head -20
 
-      # 12. Find APK (AUTO)
+      # 13. Find APK
       - name: Find APK
         run: |
           APK_PATH=$(find . -type f -name "*.apk" | head -1)
@@ -131,7 +136,7 @@ jobs:
 
           echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
-      # 13. Upload APK
+      # 14. Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -139,7 +144,7 @@ jobs:
           path: ${{ env.APK_PATH }}
           retention-days: 14
 
-      # 14. Upload Log
+      # 15. Upload Log
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -147,7 +152,7 @@ jobs:
           name: build-log-${{ github.run_number }}
           path: build.log
 
-      # 15. Release
+      # 16. Create Release
       - name: Create Release
         if: >
           success() &&
