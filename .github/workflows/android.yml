@@ -38,7 +38,6 @@ jobs:
           echo "  Commit    : ${{ github.sha }}"
           echo "========================================="
           java -version 2>&1 || true
-          echo "-----------------------------------------"
           grep distributionUrl gradle/wrapper/gradle-wrapper.properties || true
 
       # ─────────────────────────────────────────
@@ -64,16 +63,14 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
-          sdkmanager --list_installed 2>/dev/null \
-            | grep -E "(platform-tools|platforms;android|build-tools)" || true
 
       # ─────────────────────────────────────────
       # 5. Fix gradlew + repair wrapper JAR
       #
-      #    JAR di repo 0 bytes → download zip
-      #    distribusi Gradle dari services.gradle.org
-      #    lalu ekstrak gradle-wrapper.jar dari
-      #    dalam zip (tidak perlu extract semua).
+      #    JAR di repo 0 bytes.
+      #    Strategi: download gradle-bin.zip lalu
+      #    unzip ke /tmp (jangan pipe ke stdout —
+      #    crash pada file besar), kemudian cp jar.
       # ─────────────────────────────────────────
       - name: Fix gradlew & repair wrapper JAR
         run: |
@@ -86,47 +83,44 @@ jobs:
 
           if [ "$JAR_SIZE" -lt 10000 ]; then
             GRADLE_VERSION="8.6"
-            ZIP_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-            ZIP_FILE="/tmp/gradle-${GRADLE_VERSION}-bin.zip"
+            ZIP_FILE="/tmp/gradle-bin.zip"
+            EXTRACT_DIR="/tmp/gradle-extract"
 
-            echo "Downloading gradle-${GRADLE_VERSION}-bin.zip ..."
+            echo ">>> Downloading gradle-${GRADLE_VERSION}-bin.zip ..."
             curl -sSfL --retry 3 --retry-delay 5 \
-              "$ZIP_URL" -o "$ZIP_FILE"
+              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+              -o "$ZIP_FILE"
             echo "Download OK: $(du -h "$ZIP_FILE" | cut -f1)"
 
-            echo "Extracting gradle-wrapper.jar ..."
-            # gradle-wrapper.jar ada di lib/ dalam zip
-            unzip -p "$ZIP_FILE" \
-              "gradle-${GRADLE_VERSION}/lib/gradle-wrapper-${GRADLE_VERSION}.jar" \
-              > "$JAR" 2>/dev/null
+            # Cari nama jar yang tepat dulu (tanpa extract semua)
+            echo ">>> Mencari gradle-wrapper.jar di dalam zip..."
+            JAR_ENTRY=$(unzip -l "$ZIP_FILE" \
+              | awk '{print $4}' \
+              | grep "lib/gradle-wrapper" \
+              | grep "\.jar$" \
+              | head -1)
+            echo "Found entry: ${JAR_ENTRY}"
 
-            # fallback nama file tanpa versi
-            if [ "$(stat -c%s "$JAR")" -lt 10000 ]; then
-              unzip -p "$ZIP_FILE" \
-                "gradle-${GRADLE_VERSION}/lib/gradle-wrapper.jar" \
-                > "$JAR" 2>/dev/null
-            fi
+            # Extract HANYA jar itu ke folder temp (bukan pipe ke stdout)
+            mkdir -p "$EXTRACT_DIR"
+            unzip -j "$ZIP_FILE" "$JAR_ENTRY" -d "$EXTRACT_DIR"
 
-            # fallback: grep nama file yang benar dari dalam zip
-            if [ "$(stat -c%s "$JAR")" -lt 10000 ]; then
-              echo "Mencari nama jar yang tepat di dalam zip..."
-              JAR_PATH=$(unzip -l "$ZIP_FILE" \
-                | grep "gradle-wrapper" \
-                | grep "\.jar" \
-                | awk '{print $4}' \
-                | head -1)
-              echo "Found: $JAR_PATH"
-              unzip -p "$ZIP_FILE" "$JAR_PATH" > "$JAR"
-            fi
+            # Copy ke lokasi yang benar
+            EXTRACTED_JAR=$(find "$EXTRACT_DIR" -name "*.jar" | head -1)
+            echo "Extracted: $EXTRACTED_JAR ($(stat -c%s "$EXTRACTED_JAR") bytes)"
+            cp "$EXTRACTED_JAR" "$JAR"
 
-            rm -f "$ZIP_FILE"
+            # Cleanup
+            rm -rf "$ZIP_FILE" "$EXTRACT_DIR"
+
             FINAL=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
             echo "=== Final JAR: ${FINAL} bytes ==="
             [ "$FINAL" -lt 10000 ] && { echo "REPAIR GAGAL"; exit 1; }
             echo "JAR repaired OK"
           else
-            echo "JAR OK — skip repair"
+            echo "JAR OK (${JAR_SIZE} bytes) — skip repair"
           fi
+
           ls -lh gradle/wrapper/
 
       # ─────────────────────────────────────────
