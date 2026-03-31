@@ -1,0 +1,239 @@
+name: Android CI/CD
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ─────────────────────────────────────────
+      # 1. Checkout
+      # ─────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────
+      # 2. Debug – environment info
+      # ─────────────────────────────────────────
+      - name: Show environment info
+        run: |
+          echo "=========================================="
+          echo " ENVIRONMENT INFO"
+          echo "=========================================="
+          echo "Runner OS    : ${{ runner.os }}"
+          echo "GitHub ref   : ${{ github.ref }}"
+          echo "GitHub actor : ${{ github.actor }}"
+          echo "Run number   : ${{ github.run_number }}"
+          echo ""
+          echo "--- Java version ---"
+          java -version
+          echo ""
+          echo "--- Disk space ---"
+          df -h
+          echo ""
+          echo "--- Memory ---"
+          free -h
+
+      # ─────────────────────────────────────────
+      # 3. Setup JDK 17
+      # ─────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Confirm Java version
+        run: |
+          echo "--- Java after setup ---"
+          java -version
+          javac -version
+          echo "JAVA_HOME = $JAVA_HOME"
+
+      # ─────────────────────────────────────────
+      # 4. Setup Android SDK
+      # ─────────────────────────────────────────
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK licenses
+        run: |
+          echo "Accepting all Android SDK licenses..."
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Install required SDK packages
+        run: |
+          echo "Installing platform-tools, build-tools, platform..."
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "build-tools;34.0.0" \
+            "platforms;android-34"
+          echo "SDK packages installed."
+
+      - name: Show Android SDK info
+        run: |
+          echo "ANDROID_SDK_ROOT = $ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME     = $ANDROID_HOME"
+          echo ""
+          echo "--- Installed SDK packages ---"
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --list_installed || true
+
+      # ─────────────────────────────────────────
+      # 5. Cache Gradle
+      # ─────────────────────────────────────────
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # ─────────────────────────────────────────
+      # 6. Make gradlew executable
+      # ─────────────────────────────────────────
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # ─────────────────────────────────────────
+      # 7. Debug – project structure
+      # ─────────────────────────────────────────
+      - name: List project files
+        run: |
+          echo "=========================================="
+          echo " PROJECT STRUCTURE"
+          echo "=========================================="
+          echo "--- Root ---"
+          ls -la
+          echo ""
+          echo "--- app/ ---"
+          ls -la app/
+          echo ""
+          echo "--- gradle/wrapper/ ---"
+          ls -la gradle/wrapper/
+          echo ""
+          echo "--- Listing all files (depth 4) ---"
+          find . -maxdepth 4 \
+            -not -path './.git/*' \
+            -not -path './build/*' \
+            -not -path './.gradle/*' \
+            | sort
+
+      # ─────────────────────────────────────────
+      # 8. Show Gradle & Kotlin versions
+      # ─────────────────────────────────────────
+      - name: Show Gradle version
+        run: |
+          echo "Build started"
+          echo "--- Gradle version ---"
+          ./gradlew --version
+
+      # ─────────────────────────────────────────
+      # 9. Build
+      # ─────────────────────────────────────────
+      - name: Build Debug APK
+        run: |
+          echo "=========================================="
+          echo " STARTING BUILD"
+          echo "=========================================="
+          ./gradlew assembleDebug \
+            --stacktrace \
+            --info \
+            -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
+          echo "=========================================="
+          echo " BUILD FINISHED"
+          echo "=========================================="
+
+      # ─────────────────────────────────────────
+      # 10. Show Kotlin version (post-build)
+      # ─────────────────────────────────────────
+      - name: Show Kotlin version
+        run: |
+          echo "--- Kotlin version (from build output) ---"
+          ./gradlew :app:dependencies --configuration debugCompileClasspath \
+            | grep "org.jetbrains.kotlin" \
+            | head -5 || true
+
+      # ─────────────────────────────────────────
+      # 11. Verify APK exists
+      # ─────────────────────────────────────────
+      - name: Verify APK
+        run: |
+          echo "--- Checking APK output ---"
+          ls -lh app/build/outputs/apk/debug/ || echo "APK output directory not found"
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "✅ APK built successfully: $APK_PATH"
+            echo "   Size: $(du -sh $APK_PATH | cut -f1)"
+          else
+            echo "❌ APK not found at expected path!"
+            exit 1
+          fi
+
+      # ─────────────────────────────────────────
+      # 12. Upload APK artifact (always available)
+      # ─────────────────────────────────────────
+      - name: Upload APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-build-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # ─────────────────────────────────────────
+      # 13. Upload build reports (on failure)
+      # ─────────────────────────────────────────
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            app/build/reports/
+            app/build/outputs/
+            build/
+          retention-days: 7
+
+      # ─────────────────────────────────────────
+      # 14. Create GitHub Release + upload APK
+      #     Only on push to main/master (not PR)
+      # ─────────────────────────────────────────
+      - name: Create GitHub Release
+        if: success() && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Build #${{ github.run_number }}"
+          body: |
+            ## 🎵 Music Player – Auto Build
+
+            **Build:** #${{ github.run_number }}
+            **Branch:** `${{ github.ref_name }}`
+            **Commit:** `${{ github.sha }}`
+            **Triggered by:** ${{ github.actor }}
+
+            ### ✅ Build Info
+            - Debug APK built successfully
+            - Supports FLAC playback (Android MediaPlayer)
+            - Material You (M3) UI
+            - Foreground MusicService
+            - Min SDK: 24 | Target SDK: 34
+
+            ### 📥 Download
+            Download `app-debug.apk` from the assets below.
+          files: app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: false
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

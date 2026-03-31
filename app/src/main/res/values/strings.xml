@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Music Player</string>
+    <string name="no_songs_found">Tidak ada lagu ditemukan.\nPastikan ada file audio di perangkat Anda.</string>
+    <string name="permission_denied_message">Izin diperlukan untuk mengakses file musik.</string>
+    <string name="retry">Coba Lagi</string>
+    <string name="song_count">%d lagu</string>
+    <string name="play_pause">Play / Pause</string>
+    <string name="next">Berikutnya</string>
+    <string name="previous">Sebelumnya</string>
+    <string name="shuffle">Acak</string>
+    <string name="repeat">Ulangi</string>
+    <string name="album_art">Sampul Album</string>
+    <string name="now_playing">Sedang Diputar</string>
+    <string name="search_hint">Cari lagu, artis, album…</string>
+    <string name="sort_by_title">Urutkan: Judul</string>
+    <string name="sort_by_artist">Urutkan: Artis</string>
+    <string name="sort_by_duration">Urutkan: Durasi</string>
+    <string name="filter_flac">Filter FLAC</string>
+    <string name="show_all">Tampilkan Semua</string>
+    <string name="search">Cari</string>
+</resources>
