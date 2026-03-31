@@ -18,31 +18,18 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ─────────────────────────────────────────
       # 1. Checkout
-      # ─────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ─────────────────────────────────────────
-      # 2. Environment info
-      # ─────────────────────────────────────────
+      # 2. Debug Info
       - name: Show environment info
         run: |
-          echo "========================================="
-          echo "  Runner OS : ${{ runner.os }}"
-          echo "  Actor     : ${{ github.actor }}"
-          echo "  Ref       : ${{ github.ref }}"
-          echo "  Event     : ${{ github.event_name }}"
-          echo "  Run #     : ${{ github.run_number }}"
-          echo "  Commit    : ${{ github.sha }}"
-          echo "========================================="
-          java -version 2>&1 || true
-          grep distributionUrl gradle/wrapper/gradle-wrapper.properties || true
+          echo "Runner OS : ${{ runner.os }}"
+          echo "Branch    : ${{ github.ref }}"
+          java -version || true
 
-      # ─────────────────────────────────────────
-      # 3. JDK 17
-      # ─────────────────────────────────────────
+      # 3. Setup JDK 17
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
@@ -50,162 +37,107 @@ jobs:
           java-version: 17
           cache: gradle
 
-      # ─────────────────────────────────────────
-      # 4. Android SDK  (compileSdk=34)
-      # ─────────────────────────────────────────
+      # 4. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install required SDK components
+      - name: Install SDK components
         run: |
-          yes | sdkmanager --licenses 2>/dev/null || true
+          yes | sdkmanager --licenses || true
           sdkmanager \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      # ─────────────────────────────────────────
-      # 5. Fix gradlew + repair wrapper JAR
-      #
-      #    JAR di repo 0 bytes.
-      #    Strategi: download gradle-bin.zip lalu
-      #    unzip ke /tmp (jangan pipe ke stdout —
-      #    crash pada file besar), kemudian cp jar.
-      # ─────────────────────────────────────────
-      - name: Fix gradlew & repair wrapper JAR
+      # 5. Fix gradlew & wrapper (ANTI ERROR PALING PENTING)
+      - name: Fix Gradle Wrapper
         run: |
           chmod +x gradlew
           sed -i 's/\r$//' gradlew
 
           JAR="gradle/wrapper/gradle-wrapper.jar"
-          JAR_SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
-          echo "=== wrapper JAR size: ${JAR_SIZE} bytes ==="
+          SIZE=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
 
-          if [ "$JAR_SIZE" -lt 10000 ]; then
-            GRADLE_VERSION="8.6"
-            ZIP_FILE="/tmp/gradle-bin.zip"
-            EXTRACT_DIR="/tmp/gradle-extract"
+          echo "Wrapper size: $SIZE"
 
-            echo ">>> Downloading gradle-${GRADLE_VERSION}-bin.zip ..."
-            curl -sSfL --retry 3 --retry-delay 5 \
-              "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-              -o "$ZIP_FILE"
-            echo "Download OK: $(du -h "$ZIP_FILE" | cut -f1)"
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "Wrapper rusak → repairing..."
 
-            # Cari nama jar yang tepat dulu (tanpa extract semua)
-            echo ">>> Mencari gradle-wrapper.jar di dalam zip..."
-            JAR_ENTRY=$(unzip -l "$ZIP_FILE" \
-              | awk '{print $4}' \
-              | grep "lib/gradle-wrapper" \
-              | grep "\.jar$" \
-              | head -1)
-            echo "Found entry: ${JAR_ENTRY}"
+            curl -L https://services.gradle.org/distributions/gradle-8.6-bin.zip -o gradle.zip
+            unzip -q gradle.zip
 
-            # Extract HANYA jar itu ke folder temp (bukan pipe ke stdout)
-            mkdir -p "$EXTRACT_DIR"
-            unzip -j "$ZIP_FILE" "$JAR_ENTRY" -d "$EXTRACT_DIR"
+            cp gradle-8.6/lib/gradle-wrapper-*.jar "$JAR"
 
-            # Copy ke lokasi yang benar
-            EXTRACTED_JAR=$(find "$EXTRACT_DIR" -name "*.jar" | head -1)
-            echo "Extracted: $EXTRACTED_JAR ($(stat -c%s "$EXTRACTED_JAR") bytes)"
-            cp "$EXTRACTED_JAR" "$JAR"
-
-            # Cleanup
-            rm -rf "$ZIP_FILE" "$EXTRACT_DIR"
-
-            FINAL=$(stat -c%s "$JAR" 2>/dev/null || echo 0)
-            echo "=== Final JAR: ${FINAL} bytes ==="
-            [ "$FINAL" -lt 10000 ] && { echo "REPAIR GAGAL"; exit 1; }
-            echo "JAR repaired OK"
+            echo "Wrapper fixed:"
+            stat -c%s "$JAR"
           else
-            echo "JAR OK (${JAR_SIZE} bytes) — skip repair"
+            echo "Wrapper OK"
           fi
 
-          ls -lh gradle/wrapper/
-
-      # ─────────────────────────────────────────
       # 6. Setup Gradle cache
-      # ─────────────────────────────────────────
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # ─────────────────────────────────────────
       # 7. Verify Gradle
-      # ─────────────────────────────────────────
-      - name: Print Gradle version
+      - name: Check Gradle
         run: ./gradlew --version
 
-      # ─────────────────────────────────────────
-      # 8. Build Debug APK
-      # ─────────────────────────────────────────
+      # 8. Build APK (FULL DEBUG LOG)
       - name: Build Debug APK
         run: |
-          echo "=== Starting build ==="
           ./gradlew assembleDebug \
             --stacktrace \
             --info \
             --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m" \
-            2>&1 | tee build_output.log
-          echo "=== Build finished ==="
+            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m" \
+            2>&1 | tee build.log
 
-      # ─────────────────────────────────────────
       # 9. Verify APK
-      # ─────────────────────────────────────────
-      - name: Verify APK exists
+      - name: Verify APK
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
+
           if [ -f "$APK" ]; then
-            echo "APK FOUND"
+            echo "APK FOUND ✅"
             ls -lh "$APK"
           else
-            echo "APK NOT FOUND — listing build outputs:"
-            find app/build/outputs -type f 2>/dev/null || echo "(no outputs dir)"
+            echo "APK NOT FOUND ❌"
+            echo "Isi folder build:"
+            find app/build || true
             exit 1
           fi
 
-      # ─────────────────────────────────────────
       # 10. Upload APK
-      # ─────────────────────────────────────────
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MusicPlayer-debug-${{ github.run_number }}
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      # ─────────────────────────────────────────
-      # 11. Upload build log (selalu)
-      # ─────────────────────────────────────────
+      # 11. Upload Log (WAJIB)
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log-${{ github.run_number }}
-          path: build_output.log
+          path: build.log
           retention-days: 7
 
-      # ─────────────────────────────────────────
-      # 12. Upload Gradle reports saat gagal
-      # ─────────────────────────────────────────
-      - name: Upload Gradle failure logs
+      # 12. Upload Failure Logs
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gradle-failure-logs-${{ github.run_number }}
+          name: gradle-failure-${{ github.run_number }}
           path: |
-            build_output.log
+            build.log
             app/build/reports/
             ~/.gradle/daemon/**/daemon-*.log
-          retention-days: 7
 
-      # ─────────────────────────────────────────
-      # 13. Create GitHub Release
-      #     Hanya saat push ke main/master
-      # ─────────────────────────────────────────
-      - name: Create GitHub Release
-        if: >-
+      # 13. Auto Release
+      - name: Create Release
+        if: >
           success() &&
           github.event_name == 'push' &&
           (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -213,16 +145,6 @@ jobs:
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "MusicPlayer Build #${{ github.run_number }}"
-          body: |
-            🎵 **MusicPlayer Debug Build**
-
-            - Commit : `${{ github.sha }}`
-            - Branch : `${{ github.ref_name }}`
-            - Run    : #${{ github.run_number }}
-            - Actor  : ${{ github.actor }}
           files: app/build/outputs/apk/debug/app-debug.apk
-          draft: false
-          prerelease: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
